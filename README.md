@@ -1,58 +1,47 @@
-YouTube-Python-Player
-🎵 A Lightweight YouTube Video & Music Player Built with Python (Tkinter, VLC, Pytube)
+# YouTube-Python-Player  
 
-This Python-based application allows you to search, stream, and download YouTube videos and audio directly from a simple Tkinter GUI. It leverages the power of Pytube for fetching streams, VLC for smooth playback, and Tkinter for an intuitive interface.
+🎵 **A Lightweight YouTube Video & Music Player Built with Python**  
+🚀 *Stream, Download, and Play YouTube Content Offline with a Simple Tkinter GUI*  
 
-🔥 Why I Created This Project
-I wanted to build a fast, offline-friendly YouTube player that avoids heavy web-based players and ads. Unlike browser-based streaming, this app:
+---
 
-Reduces resource usage (no browser overhead).
+## 📌 **Project Overview**  
+This Python app lets you **search, play, and download YouTube videos/audio** directly from a desktop interface. Built with **Tkinter, Pytube, and VLC**, it's designed to be **fast, ad-free, and resource-efficient** compared to browser-based solutions.  
 
-Supports high-quality audio extraction (for music lovers).
+### 🔍 **Why I Built This**  
+- 🛠 **Customizable Alternative**: Avoid bloated web players and ads  
+- ⚡ **Offline Access**: Download videos/audio for offline playback  
+- 🎧 **Music-Focused**: Extract high-quality audio (MP3) effortlessly  
+- 📦 **Open-Source**: Modify or extend the code for your needs  
 
-Allows video/audio downloads without external websites.
+---
 
-Customizable & open-source (modify it as needed).
+## 🎯 **Features**  
 
-🛠 Features
-1. Core App (core_app.py - In Development)
-Lists all available video & audio formats from YouTube search results.
+### **1. Music Player (`musicapp.py`)** *(Fully Functional)*  
+✔ **High-Quality Audio Streaming**: Fetches the **highest bitrate audio** from YouTube  
+✔ **One-Click Download**: Save audio tracks as MP3 files  
+✔ **Simple Tkinter GUI**: Easy-to-use interface  
 
-Built with Tkinter (GUI), Pytube (YouTube data), and VLC (playback).
+### **2. Video Player (`core_app.py`)** *(In Development)*  
+✔ **Lists All Formats**: Displays video/audio resolutions and codecs from YouTube  
+✔ **VLC Integration**: Smooth playback (supports 720p, 1080p, etc.)  
+⚠ **Current Limitation**:  
+   - Fetches video and audio streams **separately** but can't merge them yet  
+   - **Audio playback and downloads work perfectly**  
 
-Current Issue: Separately fetches video & audio streams but struggles to merge them during playback.
+### **3. VLC Dependency Helper (`vlc_finder.py`)**  
+🔧 **Ensures VLC is detected** before converting the app to `.exe`  
 
-2. Music Player (musicapp.py - Fully Functional)
-Extracts & plays only the highest bitrate audio (ideal for music).
+---
 
-Supports streaming & downloading in MP3 format.
+## 🛠 **Installation & Usage**  
 
-3. VLC Finder (vlc_finder.py)
-Ensures VLC dependencies are detected before packaging the app into an .exe (using PyInstaller).
+### **Prerequisites**  
+- Python 3.7+  
+- VLC Media Player (installed system-wide)  
 
-📥 Installation & Usage
-Install dependencies:
-
-sh
-pip install pytube python-vlc tkinter pyinstaller
-Run the app:
-
-sh
-python musicapp.py  # For music-only mode
-python core_app.py  # For video playback (under development)
-Build to .exe (optional):
-
-sh
-pyinstaller --onefile --windowed musicapp.py
-🚧 Future Improvements
-Fix video+audio sync issue in core_app.py.
-
-Add playlist support & batch downloads.
-
-Improve UI/UX with modern themes.
-
-📜 License
-Open-source under MIT License – feel free to modify and distribute!
-
-🔗 Contribute or Report Issues: GitHub Issues
-
+### **Steps**  
+1. **Install dependencies**:  
+   ```sh
+   pip install pytube python-vlc tkinter pyinstaller
