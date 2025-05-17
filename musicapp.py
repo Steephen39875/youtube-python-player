@@ -53,7 +53,7 @@ class App:
         lf.rowconfigure(0, weight=1)
         
         self.list = tk.Listbox(lf, font=('Helvetica', 10), 
-                              selectbackground="#a6a6a6", selectforeground="black")
+                              selectbackground="#006eff", selectforeground="white")
         sb = ttk.Scrollbar(lf, orient="vertical", command=self.list.yview)
         self.list.config(yscrollcommand=sb.set)
         
