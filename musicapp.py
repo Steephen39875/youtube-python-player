@@ -1,507 +1,468 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import subprocess
-import json
-import vlc
-import threading
-import os
-import time
-import re
-import humanize
-import sys
+import subprocess, json, vlc, threading, os, time, re, humanize, sys
 
-class AudioPlayerApp:
+class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("YT-DLP")
-        self.root.geometry("600x450")
-        self.root.minsize(500, 400)
+        root.title("YT-DLP")
+        root.geometry("600x450")
+        root.minsize(500, 400)
         
-        # Initialize state
+        # State vars
         self.tracks = []
-        self.current_track = None
-        self.player = None
-        self.selected_format = None
-        self.available_formats = []
-        self.search_cache = {}
-        self.downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads", "MusicPlayer")
-        os.makedirs(self.downloads_dir, exist_ok=True)
-        self.timer_id = None
-        self.is_paused = False
-        self.slider_dragging = False
+        self.player = self.current = None
+        self.fmt = self.avail_fmts = []
+        self.cache = {}
+        self.dl_dir = os.path.join(os.path.expanduser("~"), "Downloads", "MusicPlayer")
+        os.makedirs(self.dl_dir, exist_ok=True)
+        self.timer = None
+        self.paused = self.dragging = False
         
-        # Set up UI
         self.create_ui()
         self.search_entry.focus_set()
     
     def create_ui(self):
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        mf = ttk.Frame(self.root, padding="10")
+        mf.pack(fill=tk.BOTH, expand=True)
         
-        # Configure grid weights
-        main_frame.columnconfigure(0, weight=1)
-        for i, weight in enumerate([0, 0, 1, 0, 0, 0]):
-            main_frame.rowconfigure(i, weight=weight)
+        # Grid config
+        mf.columnconfigure(0, weight=1)
+        for i, w in enumerate([0, 0, 1, 0, 0, 0]): mf.rowconfigure(i, weight=w)
         
-        # Search bar
-        search_frame = ttk.Frame(main_frame)
-        search_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        search_frame.columnconfigure(0, weight=1)
+        # Search 
+        sf = ttk.Frame(mf)
+        sf.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        sf.columnconfigure(0, weight=1)
         
         self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var, font=('Helvetica', 11))
+        self.search_entry = ttk.Entry(sf, textvariable=self.search_var, font=('Helvetica', 11))
         self.search_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.search_entry.bind('<Return>', lambda event: self.search_audio())
+        self.search_entry.bind('<Return>', lambda e: self.search())
         
-        self.search_button = ttk.Button(search_frame, text="🔍", command=self.search_audio)
-        self.search_button.grid(row=0, column=1, sticky="e")
+        ttk.Button(sf, text="🔍", command=self.search).grid(row=0, column=1, sticky="e")
         
-        # Player info
-        ttk.Label(main_frame, text="Player: VLC Media Player | Downloader: yt-dlp", 
-                 font=('Helvetica', 9)).grid(row=1, column=0, sticky="w", pady=5)
+        # Info label
+        ttk.Label(mf, text="Player: VLC Media Player | Downloader: yt-dlp", 
+                font=('Helvetica', 9)).grid(row=1, column=0, sticky="w", pady=5)
         
         # Results list
-        list_frame = ttk.LabelFrame(main_frame, text="Results")
-        list_frame.grid(row=2, column=0, sticky="nsew", pady=5)
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
+        lf = ttk.LabelFrame(mf, text="Results")
+        lf.grid(row=2, column=0, sticky="nsew", pady=5)
+        lf.columnconfigure(0, weight=1)
+        lf.rowconfigure(0, weight=1)
         
-        self.track_listbox = tk.Listbox(list_frame, font=('Helvetica', 10), 
-                                      selectbackground="#a6a6a6", selectforeground="black")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.track_listbox.yview)
-        self.track_listbox.config(yscrollcommand=scrollbar.set)
+        self.list = tk.Listbox(lf, font=('Helvetica', 10), 
+                              selectbackground="#a6a6a6", selectforeground="black")
+        sb = ttk.Scrollbar(lf, orient="vertical", command=self.list.yview)
+        self.list.config(yscrollcommand=sb.set)
         
-        self.track_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0), pady=5)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 5), pady=5)
-        self.track_listbox.bind('<<ListboxSelect>>', self.on_track_select)
+        self.list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0), pady=5)
+        sb.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 5), pady=5)
+        self.list.bind('<<ListboxSelect>>', self.on_select)
         
         # Track info
-        info_frame = ttk.Frame(main_frame)
-        info_frame.grid(row=3, column=0, sticky="ew", pady=5)
+        if_frame = ttk.Frame(mf)
+        if_frame.grid(row=3, column=0, sticky="ew", pady=5)
         
         self.title_var = tk.StringVar(value="No track selected")
-        ttk.Label(info_frame, textvariable=self.title_var, 
+        ttk.Label(if_frame, textvariable=self.title_var, 
                 wraplength=580, font=('Helvetica', 10, 'bold')).pack(anchor="w")
         
         self.info_var = tk.StringVar(value="Duration: --:-- | Format: -- | Size: --")
-        ttk.Label(info_frame, textvariable=self.info_var).pack(anchor="w")
+        ttk.Label(if_frame, textvariable=self.info_var).pack(anchor="w")
         
         # Controls
-        controls_frame = ttk.Frame(main_frame)
-        controls_frame.grid(row=4, column=0, sticky="ew", pady=5)
+        cf = ttk.Frame(mf)
+        cf.grid(row=4, column=0, sticky="ew", pady=5)
         
         # Player controls
-        player_btns = ttk.Frame(controls_frame)
-        player_btns.pack(side=tk.LEFT)
+        btns = ttk.Frame(cf)
+        btns.pack(side=tk.LEFT)
         
-        self.play_button = ttk.Button(player_btns, text="▶", command=self.play_audio, 
-                                     state=tk.DISABLED, width=3)
-        self.pause_button = ttk.Button(player_btns, text="⏸", command=self.toggle_pause, 
-                                      state=tk.DISABLED, width=3)
-        self.stop_button = ttk.Button(player_btns, text="⏹", command=self.stop_audio, 
-                                     state=tk.DISABLED, width=3)
+        self.play_btn = ttk.Button(btns, text="▶", command=self.play, state=tk.DISABLED, width=3)
+        self.pause_btn = ttk.Button(btns, text="⏸", command=self.toggle_pause, state=tk.DISABLED, width=3)
+        self.stop_btn = ttk.Button(btns, text="⏹", command=self.stop, state=tk.DISABLED, width=3)
         
-        for btn in (self.play_button, self.pause_button, self.stop_button):
-            btn.pack(side=tk.LEFT, padx=3)
+        for b in (self.play_btn, self.pause_btn, self.stop_btn): b.pack(side=tk.LEFT, padx=3)
         
         # Download controls
-        download_frame = ttk.Frame(controls_frame)
-        download_frame.pack(side=tk.RIGHT)
+        dlf = ttk.Frame(cf)
+        dlf.pack(side=tk.RIGHT)
         
-        self.format_var = tk.StringVar(value="Select Format")
-        self.format_selector = ttk.Combobox(download_frame, textvariable=self.format_var, 
-                                          state="readonly", width=40)
-        self.format_selector.pack(side=tk.LEFT, padx=5)
+        self.fmt_var = tk.StringVar(value="Select Format")
+        self.fmt_sel = ttk.Combobox(dlf, textvariable=self.fmt_var, state="readonly", width=40)
+        self.fmt_sel.pack(side=tk.LEFT, padx=5)
         
-        self.download_button = ttk.Button(download_frame, text="⬇", 
-                                        command=self.download_audio, state=tk.DISABLED, width=3)
-        self.download_button.pack(side=tk.LEFT, padx=5)
+        self.dl_btn = ttk.Button(dlf, text="⬇", command=self.download, state=tk.DISABLED, width=3)
+        self.dl_btn.pack(side=tk.LEFT, padx=5)
         
-        # Progress bar and slider
-        progress_frame = ttk.Frame(main_frame)
-        progress_frame.grid(row=5, column=0, sticky="ew", pady=5)
-        progress_frame.columnconfigure(1, weight=1)
+        # Progress bar
+        pf = ttk.Frame(mf)
+        pf.grid(row=5, column=0, sticky="ew", pady=5)
+        pf.columnconfigure(1, weight=1)
         
         self.time_var = tk.StringVar(value="0:00 / 0:00")
-        ttk.Label(progress_frame, textvariable=self.time_var).grid(row=0, column=0, sticky="w", padx=(0, 5))
+        ttk.Label(pf, textvariable=self.time_var).grid(row=0, column=0, sticky="w", padx=(0, 5))
         
-        self.slider = ttk.Scale(progress_frame, from_=0, to=100, orient="horizontal")
+        self.slider = ttk.Scale(pf, from_=0, to=100, orient="horizontal")
         self.slider.grid(row=0, column=1, sticky="ew")
-        self.slider.bind("<ButtonPress-1>", self.on_slider_press)
+        self.slider.bind("<ButtonPress-1>", lambda e: setattr(self, 'dragging', True))
         self.slider.bind("<ButtonRelease-1>", self.on_slider_release)
         
         # Status bar
-        self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W).grid(
+        self.status = tk.StringVar(value="Ready")
+        ttk.Label(mf, textvariable=self.status, relief=tk.SUNKEN, anchor=tk.W).grid(
             row=6, column=0, sticky="ew", pady=(5, 0))
     
-    def on_slider_press(self, event):
-        self.slider_dragging = True
-        
-    def on_slider_release(self, event):
+    def on_slider_release(self, e):
         if self.player:
-            pos = self.slider.get()
-            length = self.player.get_length()
-            target_ms = int(length * (pos / 100))
-            self.player.set_time(target_ms)
-        self.slider_dragging = False
+            pos, length = self.slider.get(), self.player.get_length()
+            self.player.set_time(int(length * (pos / 100)))
+        self.dragging = False
     
-    def run_command(self, command, capture_output=True, check=False):
-        startupinfo = None
+    def run_cmd(self, cmd, capture=True, check=False):
+        si = None
         if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
-        if capture_output:
-            return subprocess.run(command, capture_output=capture_output, text=True, 
-                               startupinfo=startupinfo, check=check)
-        else:
-            return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                 text=True, startupinfo=startupinfo)
+        return subprocess.run(cmd, capture_output=capture, text=True, 
+                           startupinfo=si, check=check) if capture else \
+               subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                             text=True, startupinfo=si)
     
-    def search_audio(self):
-        query = self.search_var.get().strip()
-        if not query:
+    def search(self):
+        q = self.search_var.get().strip()
+        if not q:
             messagebox.showwarning("Input Error", "Please enter a search query.")
             return
         
-        self.stop_audio()
-        self.status_var.set(f"Searching for: {query}")
-        threading.Thread(target=self._search_thread, args=(query,), daemon=True).start()
+        self.stop()
+        self.status.set(f"Searching for: {q}")
+        threading.Thread(target=self._search_thread, args=(q,), daemon=True).start()
 
-    def _search_thread(self, query):
+    def _search_thread(self, q):
         try:
-            if query in self.search_cache:
-                tracks = self.search_cache[query]
+            if q in self.cache:
+                tracks = self.cache[q]
             else:
-                result = self.run_command(["yt-dlp", "--flat-playlist", "--quiet", "--dump-json", f"ytsearch20:{query}"], check=True)
+                result = self.run_cmd(["yt-dlp", "--flat-playlist", "--quiet", "--dump-json", f"ytsearch20:{q}"], check=True)
                 tracks = [json.loads(line) for line in result.stdout.splitlines()]
-                self.search_cache[query] = tracks
+                self.cache[q] = tracks
                 
-            self.root.after(0, lambda: self._update_search_results(tracks))
+            self.root.after(0, lambda: self._update_results(tracks))
         except Exception as e:
-            self.root.after(0, lambda: self.status_var.set(f"Search error: {str(e)[:50]}"))
+            self.root.after(0, lambda: self.status.set(f"Search error: {str(e)[:50]}"))
 
-    def _update_search_results(self, tracks):
+    def _update_results(self, tracks):
         self.tracks = tracks
-        self.track_listbox.delete(0, tk.END)
+        self.list.delete(0, tk.END)
         
         if not tracks:
-            self.status_var.set("No tracks found.")
+            self.status.set("No tracks found.")
             return
             
-        for i, track in enumerate(tracks):
-            title = track.get("title", "N/A")
-            duration = self.format_duration(track.get("duration", 0))
-            self.track_listbox.insert(tk.END, f"{i+1}. {title} [{duration}]")
+        for i, t in enumerate(tracks):
+            title = t.get("title", "N/A")
+            dur = self.fmt_time(t.get("duration", 0))
+            self.list.insert(tk.END, f"{i+1}. {title} [{dur}]")
         
-        self.status_var.set(f"Found {len(tracks)} tracks")
+        self.status.set(f"Found {len(tracks)} tracks")
 
-    def format_duration(self, seconds):
-        if not seconds:
-            return "--:--"
-            
-        seconds = int(seconds)
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        if hours > 0:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        else:
-            return f"{minutes}:{seconds:02d}"
+    def fmt_time(self, secs):
+        if not secs: return "--:--"
+        secs = int(secs)
+        h, r = divmod(secs, 3600)
+        m, s = divmod(r, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
 
-    def on_track_select(self, event):
-        selection = self.track_listbox.curselection()
-        if not selection:
-            return
+    def on_select(self, e):
+        sel = self.list.curselection()
+        if not sel: return
         
-        self.stop_audio()
+        self.stop()
         
-        for btn in [self.play_button, self.pause_button, self.download_button]:
-            btn["state"] = tk.DISABLED
+        for b in [self.play_btn, self.pause_btn, self.dl_btn]: b["state"] = tk.DISABLED
         
-        self.format_selector["values"] = []
-        self.format_var.set("Loading formats...")
+        self.fmt_sel["values"] = []
+        self.fmt_var.set("Loading formats...")
             
-        index = selection[0]
-        if index >= len(self.tracks):
-            return
+        idx = sel[0]
+        if idx >= len(self.tracks): return
             
-        track = self.tracks[index]
-        self.current_track = track
+        track = self.tracks[idx]
+        self.current = track
         
         self.title_var.set(track.get("title", "Unknown Title"))
-        self.info_var.set(f"Duration: {self.format_duration(track.get('duration', 0))} | Loading format info...")
+        self.info_var.set(f"Duration: {self.fmt_time(track.get('duration', 0))} | Loading format info...")
         
         threading.Thread(target=self._fetch_formats, args=(track,), daemon=True).start()
-        self.status_var.set("Finding available formats...")
+        self.status.set("Finding available formats...")
 
     def _fetch_formats(self, track):
-        track_url = track.get("webpage_url", "")
-        if not track_url:
-            self.root.after(0, lambda: self.status_var.set("Failed to get track URL"))
+        url = track.get("webpage_url", "")
+        if not url:
+            self.root.after(0, lambda: self.status.set("Failed to get track URL"))
             return
             
         try:
-            result = self.run_command(["yt-dlp", "-J", track_url], check=True)
-            track_data = json.loads(result.stdout)
-            formats = track_data.get("formats", [])
+            result = self.run_cmd(["yt-dlp", "-J", url], check=True)
+            data = json.loads(result.stdout)
+            fmts = data.get("formats", [])
             
             # Add special formats first
-            processed_formats = [
+            proc_fmts = [
                 {"format_id": "bestaudio/best", "ext": "best", "display_name": "Best Audio Quality (auto format)", "is_special": True},
                 {"format_id": "mp3", "ext": "mp3", "display_name": "MP3 Audio (converted)", "is_special": True}
             ]
             
-            # Include all formats with audio
-            for fmt in formats:
-                if fmt.get("acodec", "none") != "none":
-                    ext = fmt.get("ext", "unknown")
-                    format_id = fmt.get("format_id", "unknown")
-                    abr = fmt.get("abr", fmt.get("tbr", 0))
-                    bitrate_str = f"{abr:.1f}kbps" if abr else "?"
-                    filesize = fmt.get("filesize", None) or fmt.get("filesize_approx", None)
-                    size_str = humanize.naturalsize(filesize) if filesize else "?"
-                    is_audio_only = fmt.get("vcodec", "") == "none"
-                    type_str = "Audio" if is_audio_only else "A+V"
+            # Include audio formats
+            for f in fmts:
+                if f.get("acodec", "none") != "none":
+                    ext = f.get("ext", "unknown")
+                    fid = f.get("format_id", "unknown")
+                    abr = f.get("abr", f.get("tbr", 0))
+                    br_str = f"{abr:.1f}kbps" if abr else "?"
+                    fsize = f.get("filesize", None) or f.get("filesize_approx", None)
+                    size_str = humanize.naturalsize(fsize) if fsize else "?"
+                    is_audio = f.get("vcodec", "") == "none"
+                    type_str = "Audio" if is_audio else "A+V"
                     
-                    details = []
-                    details.append(f"{format_id}")
-                    details.append(f"{ext}")
-                    details.append(f"{type_str}")
-                    details.append(f"{bitrate_str}")
+                    details = [fid, ext, type_str, br_str]
                     
-                    if not is_audio_only and fmt.get("height"):
-                        details.append(f"{fmt.get('height')}p")
+                    if not is_audio and f.get("height"):
+                        details.append(f"{f.get('height')}p")
                     
-                    details.append(f"{size_str}")
+                    details.append(size_str)
                     
-                    fmt["display_name"] = " | ".join(details)
-                    processed_formats.append(fmt)
+                    f["display_name"] = " | ".join(details)
+                    proc_fmts.append(f)
             
-            self.available_formats = processed_formats
-            
-            # Choose best audio format as default
-            self.selected_format = processed_formats[0] if processed_formats else None
-                
-            self.root.after(0, lambda: self._update_format_list(processed_formats))
+            self.avail_fmts = proc_fmts
+            self.fmt = proc_fmts[0] if proc_fmts else None
+            self.root.after(0, lambda: self._update_formats(proc_fmts))
             
         except Exception as e:
             print(f"Format error: {str(e)}")
-            self.root.after(0, lambda: self.status_var.set(f"Error: {str(e)[:50]}"))
+            self.root.after(0, lambda: self.status.set(f"Error: {str(e)[:50]}"))
 
-    def _update_format_list(self, formats):
-        display_items = [fmt["display_name"] for fmt in formats]
+    def _update_formats(self, fmts):
+        display = [f["display_name"] for f in fmts]
         
-        self.format_selector["values"] = display_items
+        self.fmt_sel["values"] = display
+        if display: self.fmt_sel.current(0)
         
-        if display_items:
-            self.format_selector.current(0)
-        
-        if self.selected_format:
-            bitrate = self.selected_format.get("abr", self.selected_format.get("tbr", 0))
-            bitrate_str = f"{bitrate:.1f} kbps" if bitrate else "Unknown"
-            filesize = self.selected_format.get("filesize", None) or self.selected_format.get("filesize_approx", None)
-            size_str = humanize.naturalsize(filesize) if filesize else "Unknown"
-            ext = self.selected_format.get("ext", "mp3")
+        if self.fmt:
+            if self.fmt.get("is_special", False):
+                best = None
+                best_q = 0
+                
+                for f in fmts:
+                    if f.get("is_special", False): continue
+                    if f.get("vcodec", "") == "none":
+                        q = f.get("abr", f.get("tbr", 0) or 0)
+                        if q > best_q:
+                            best_q = q
+                            best = f
+                
+                if best:
+                    br = best.get("abr", best.get("tbr", 0))
+                    fsize = best.get("filesize") or best.get("filesize_approx")
+                    ext = best.get("ext", "mp3")
+                else:
+                    br, fsize, ext = 0, None, self.fmt.get("ext", "mp3")
+            else:
+                br = self.fmt.get("abr", self.fmt.get("tbr", 0))
+                fsize = self.fmt.get("filesize") or self.fmt.get("filesize_approx")
+                ext = self.fmt.get("ext", "mp3")
             
-            self.info_var.set(f"Duration: {self.format_duration(self.current_track.get('duration', 0))} | Format: {ext} | Size: {size_str}")
+            br_str = f"{br:.1f} kbps" if br else "Unknown"
+            dur = self.current.get("duration", 0)
+            
+            if not fsize and br and dur:
+                est = (br * dur) / 8
+                size_str = humanize.naturalsize(est * 1000) + " (est.)"
+            elif fsize:
+                size_str = humanize.naturalsize(fsize)
+            else:
+                size_str = "Unknown"
+                
+            self.info_var.set(f"Duration: {self.fmt_time(dur)} | Format: {ext} | Size: {size_str}")
         
-        self.play_button["state"] = tk.NORMAL
-        self.download_button["state"] = tk.NORMAL
-        
-        self.status_var.set(f"Ready to play or download. {len(formats)} formats available.")
+        self.play_btn["state"] = self.dl_btn["state"] = tk.NORMAL
+        self.status.set(f"Ready. {len(fmts)} formats available.")
 
-    def play_audio(self):
-        if not self.current_track:
+    def play(self):
+        if not self.current:
             messagebox.showwarning("Selection Error", "Please select a track first.")
             return
         
-        self.stop_audio()
-        self.is_paused = False
-        self.pause_button.config(text="⏸")
+        self.stop()
+        self.paused = False
+        self.pause_btn.config(text="⏸")
             
-        track_url = self.current_track.get("webpage_url", "")
-        if not track_url:
+        url = self.current.get("webpage_url", "")
+        if not url:
             messagebox.showwarning("URL Error", "Failed to retrieve track URL.")
             return
             
-        self.status_var.set("Preparing audio for playback...")
-        threading.Thread(target=self._setup_streaming, args=(track_url,), daemon=True).start()
+        self.status.set("Preparing audio...")
+        threading.Thread(target=self._setup_stream, args=(url,), daemon=True).start()
 
     def toggle_pause(self):
-        if not self.player:
-            return
+        if not self.player: return
             
-        if self.is_paused:
+        if self.paused:
             self.player.play()
-            self.is_paused = False
-            self.pause_button.config(text="⏸")
-            self.status_var.set("Playback resumed")
+            self.paused = False
+            self.pause_btn.config(text="⏸")
+            self.status.set("Playback resumed")
         else:
             self.player.pause()
-            self.is_paused = True
-            self.pause_button.config(text="▶")
-            self.status_var.set("Playback paused")
+            self.paused = True
+            self.pause_btn.config(text="▶")
+            self.status.set("Playback paused")
 
-    def _setup_streaming(self, track_url):
+    def _setup_stream(self, url):
         try:
-            format_spec = "bestaudio/best" if self.selected_format.get("is_special", False) else \
-                          self.selected_format.get("format_id", "bestaudio/best")
-                
-            result = self.run_command(["yt-dlp", "-f", format_spec, "-g", track_url], check=True)
+            fmt_spec = "bestaudio/best" if self.fmt.get("is_special", False) else self.fmt.get("format_id", "bestaudio/best")
+            result = self.run_cmd(["yt-dlp", "-f", fmt_spec, "-g", url], check=True)
             stream_url = result.stdout.strip()
-            
             self.root.after(0, lambda: self._start_player(stream_url))
-            
         except Exception as e:
             print(f"Streaming error: {str(e)}")
-            self.root.after(0, lambda: self.status_var.set(f"Error: {str(e)[:50]}"))
+            self.root.after(0, lambda: self.status.set(f"Error: {str(e)[:50]}"))
 
     def _start_player(self, stream_url):
-        self._cleanup_player()
+        self._cleanup()
             
-        instance = vlc.Instance('--no-video', '--quiet')
-        self.player = instance.media_player_new()
+        inst = vlc.Instance('--no-video', '--quiet')
+        self.player = inst.media_player_new()
         
-        media = instance.media_new(stream_url)
+        media = inst.media_new(stream_url)
         self.player.set_media(media)
-        
         media.parse()
-        
         self.player.play()
-        self.status_var.set("Playing audio with VLC...")
         
-        # Update button states
-        self.stop_button["state"] = tk.NORMAL
-        self.pause_button["state"] = tk.NORMAL
-        self.play_button["state"] = tk.DISABLED
+        self.status.set("Playing audio with VLC...")
+        self.stop_btn["state"] = self.pause_btn["state"] = tk.NORMAL
+        self.play_btn["state"] = tk.DISABLED
         
         self.root.after(500, self._update_playback)
     
-    def _cleanup_player(self):
+    def _cleanup(self):
         if self.player:
             self.player.stop()
             self.player = None
-            
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
+        if self.timer:
+            self.root.after_cancel(self.timer)
+            self.timer = None
 
     def _update_playback(self):
-        if not self.player:
-            return
+        if not self.player: return
             
         try:
-            current_ms = self.player.get_time()
-            length = self.player.get_length()
+            curr = self.player.get_time()
+            total = self.player.get_length()
             
-            if length > 0 and not self.slider_dragging:
-                position = (current_ms / length) * 100
-                self.slider.set(position)
+            if total > 0 and not self.dragging:
+                pos = (curr / total) * 100
+                self.slider.set(pos)
                 
-                current_sec = current_ms // 1000
-                total_sec = length // 1000
-                current_str = self.format_duration(current_sec)
-                total_str = self.format_duration(total_sec)
-                self.time_var.set(f"{current_str} / {total_str}")
+                curr_sec, total_sec = curr // 1000, total // 1000
+                curr_str, total_str = self.fmt_time(curr_sec), self.fmt_time(total_sec)
+                self.time_var.set(f"{curr_str} / {total_str}")
             
             if self.player.get_state() == vlc.State.Ended:
-                self.stop_audio()
-                self.status_var.set("Playback finished")
+                self.stop()
+                self.status.set("Playback finished")
             else:
-                self.timer_id = self.root.after(500, self._update_playback)
+                self.timer = self.root.after(500, self._update_playback)
                 
         except Exception as e:
             print(f"Playback error: {str(e)}")
-            self.stop_audio()
-            self.status_var.set("Playback error")
+            self.stop()
+            self.status.set("Playback error")
 
-    def stop_audio(self):
-        self._cleanup_player()
-            
+    def stop(self):
+        self._cleanup()
         self.slider.set(0)
         self.time_var.set("0:00 / 0:00")
-        self.status_var.set("Playback stopped")
-        self.stop_button["state"] = tk.DISABLED
-        self.pause_button["state"] = tk.DISABLED
-        self.is_paused = False
-        self.pause_button.config(text="⏸")
+        self.status.set("Playback stopped")
+        self.stop_btn["state"] = self.pause_btn["state"] = tk.DISABLED
+        self.paused = False
+        self.pause_btn.config(text="⏸")
         
-        if self.selected_format:
-            self.play_button["state"] = tk.NORMAL
+        if self.fmt: self.play_btn["state"] = tk.NORMAL
 
-    def download_audio(self):
-        if not self.current_track:
+    def download(self):
+        if not self.current:
             messagebox.showwarning("Selection Error", "Please select a track first.")
             return
             
-        track_url = self.current_track.get("webpage_url", "")
-        if not track_url:
+        url = self.current.get("webpage_url", "")
+        if not url:
             messagebox.showwarning("URL Error", "Failed to retrieve track URL.")
             return
         
-        selected_index = self.format_selector.current()
-        if selected_index < 0 or selected_index >= len(self.available_formats):
+        sel_idx = self.fmt_sel.current()
+        if sel_idx < 0 or sel_idx >= len(self.avail_fmts):
             messagebox.showwarning("Format Error", "Please select a download format.")
             return
             
-        selected_format = self.available_formats[selected_index]
+        sel_fmt = self.avail_fmts[sel_idx]
         
-        title = self.current_track.get("title", "audio")
-        safe_title = re.sub(r'[^a-zA-Z0-9]', "", title)[:20]
-        timestamp = str(int(time.time()))
-        filename = f"{safe_title}_{timestamp}"
+        title = self.current.get("title", "audio")
+        safe = re.sub(r'[^a-zA-Z0-9]', "", title)[:20]
+        ts = str(int(time.time()))
+        fname = f"{safe}_{ts}"
         
-        output_path = os.path.join(self.downloads_dir, filename)
+        out_path = os.path.join(self.dl_dir, fname)
         
-        self.status_var.set("Starting download...")
+        self.status.set("Starting download...")
         self.slider.set(0)
-        self.download_button["state"] = tk.DISABLED
+        self.dl_btn["state"] = tk.DISABLED
         
-        threading.Thread(
-            target=self._download_thread, 
-            args=(track_url, output_path, selected_format),
-            daemon=True
-        ).start()
+        threading.Thread(target=self._dl_thread, args=(url, out_path, sel_fmt), daemon=True).start()
 
-    def _download_thread(self, track_url, output_path, selected_format):
+    def _dl_thread(self, url, path, fmt):
         try:
-            command = ["yt-dlp", "-o", f"{output_path}.%(ext)s", "--no-playlist"]
+            cmd = ["yt-dlp", "-o", f"{path}.%(ext)s", "--no-playlist"]
             
-            if selected_format.get("is_special") and selected_format.get("ext") == "mp3":
-                command.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
-            elif selected_format.get("is_special"):
-                command.extend(["-f", "bestaudio/best"])
+            if fmt.get("is_special") and fmt.get("ext") == "mp3":
+                cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+            elif fmt.get("is_special"):
+                cmd.extend(["-f", "bestaudio/best"])
             else:
-                command.extend(["-f", selected_format.get("format_id")])
+                cmd.extend(["-f", fmt.get("format_id")])
             
-            command.append(track_url)
+            cmd.append(url)
             
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:
-                downloaded_file = None
-                for file in os.listdir(self.downloads_dir):
-                    if file.startswith(os.path.basename(output_path)):
-                        downloaded_file = os.path.join(self.downloads_dir, file)
+                dl_file = None
+                for file in os.listdir(self.dl_dir):
+                    if file.startswith(os.path.basename(path)):
+                        dl_file = os.path.join(self.dl_dir, file)
                         break
                         
-                if downloaded_file:
-                    self.root.after(0, lambda: self._download_complete(downloaded_file))
+                if dl_file:
+                    self.root.after(0, lambda: self._dl_complete(dl_file))
                 else:
-                    self.root.after(0, lambda: self._download_failed("File downloaded but not found"))
+                    self.root.after(0, lambda: self._dl_failed("File downloaded but not found"))
             else:
-                error_msg = result.stderr if result.stderr else "Unknown error"
-                self.root.after(0, lambda: self._download_failed(f"yt-dlp error: {error_msg[:100]}"))
+                err = result.stderr if result.stderr else "Unknown error"
+                self.root.after(0, lambda: self._dl_failed(f"yt-dlp error: {err[:100]}"))
                 
         except Exception as e:
-            self.root.after(0, lambda: self._download_failed(str(e)))
+            self.root.after(0, lambda: self._dl_failed(str(e)))
 
-    def _download_complete(self, path):
+    def _dl_complete(self, path):
         self.slider.set(100)
-        self.status_var.set("Download complete!")
-        self.download_button["state"] = tk.NORMAL
+        self.status.set("Download complete!")
+        self.dl_btn["state"] = tk.NORMAL
         
         messagebox.showinfo(
             "Download Complete", 
@@ -509,34 +470,31 @@ class AudioPlayerApp:
         )
         
         try:
-            directory = os.path.dirname(path)
+            dir_path = os.path.dirname(path)
             if os.name == 'nt':
-                os.startfile(directory)
+                os.startfile(dir_path)
             elif os.name == 'posix':
                 if sys.platform == 'darwin':
-                    subprocess.call(['open', directory])
+                    subprocess.call(['open', dir_path])
                 else:
-                    subprocess.call(['xdg-open', directory])
+                    subprocess.call(['xdg-open', dir_path])
         except Exception as e:
             print(f"Error opening folder: {str(e)}")
 
-    def _download_failed(self, error_msg):
+    def _dl_failed(self, err):
         self.slider.set(0)
-        self.status_var.set(f"Download failed: {error_msg[:50]}...")
-        self.download_button["state"] = tk.NORMAL
-        
-        messagebox.showerror("Download Error", f"Failed to download audio:\n{error_msg}")
+        self.status.set(f"Download failed: {err[:50]}...")
+        self.dl_btn["state"] = tk.NORMAL
+        messagebox.showerror("Download Error", f"Failed to download audio:\n{err}")
 
-def resource_path(relative_path):
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, relative_path)
+def resource_path(rel_path):
+    return os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__))), rel_path)
 
 if __name__ == "__main__":
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
-    except:
-        pass
+    except: pass
         
     try:
         import humanize
@@ -548,14 +506,14 @@ if __name__ == "__main__":
         subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True)
     except FileNotFoundError:
         messagebox.showerror("Missing Dependency", 
-                           "yt-dlp is not installed or not in your PATH. Please install it to use this application.")
+                        "yt-dlp is not installed or not in your PATH. Please install it to use this application.")
         sys.exit(1)
     
     if getattr(sys, 'frozen', False):
-        vlc_plugin_path = resource_path(os.path.join('vlc', 'plugins'))
-        os.environ['VLC_PLUGIN_PATH'] = vlc_plugin_path
+        vlc_path = resource_path(os.path.join('vlc', 'plugins'))
+        os.environ['VLC_PLUGIN_PATH'] = vlc_path
         os.environ["YTDLP_FILENAME"] = resource_path("yt-dlp.exe")
         
     root = tk.Tk()
-    app = AudioPlayerApp(root)
+    app = App(root)
     root.mainloop()
